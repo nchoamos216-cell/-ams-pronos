@@ -1,0 +1,37 @@
+name: AMS Pronos — Collecte quotidienne des données
+
+on:
+  schedule:
+    # Tous les jours à 03h00 UTC (≈ 04h00/05h00 heure française selon la saison)
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}   # permet de lancer le job manuellement depuis l'onglet Actions
+
+jobs:
+  scrape-and-populate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Installation de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Installation des dépendances
+        run: pip install -r scripts/requirements.txt
+
+      - name: Exécution du script de collecte
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: python scripts/scraper.py
+
+      - name: Notification en cas d'échec
+        if: failure()
+        run: echo "::error::Le job de collecte AMS Pronos a échoué — vérifier les logs ci-dessus."
