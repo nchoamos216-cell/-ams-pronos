@@ -9,7 +9,7 @@ on:
 jobs:
   scrape-and-populate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     steps:
       - name: Checkout du dépôt
