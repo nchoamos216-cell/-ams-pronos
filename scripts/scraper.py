@@ -46,11 +46,12 @@ FOOTBALL_DATA_API_KEY = os.environ["FOOTBALL_DATA_API_KEY"]
 FOOTBALL_DATA_BASE = "https://api.football-data.org/v4"
 HEADERS = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
 
-# Compétitions gratuites couvertes par football-data.org (codes officiels)
-# Top 5 championnats + Eredivisie = 6 "grands" championnats couverts par le tier gratuit.
-# (D'autres comme Primeira Liga (PPL) ou Championship (ELC) peuvent être ajoutés
-#  de la même façon si le quota de 10 req/min le permet.)
-COMPETITIONS = ["PL", "FL1", "PD", "SA", "BL1", "DED", "CL"]
+# Compétitions gratuites couvertes par football-data.org (codes officiels).
+# 9 grands championnats domestiques à matchs hebdomadaires réguliers (le tier
+# gratuit propose aussi CL/EC/WC mais ce sont des compétitions internationales/
+# continentales avec très peu de matchs par semaine — on les exclut ici pour
+# maximiser le nombre de matchs disponibles au quotidien).
+COMPETITIONS = ["PL", "FL1", "PD", "SA", "BL1", "DED", "BSA", "ELC", "PPL"]
 
 H2H_MIN_MATCHES = 5
 H2H_MAX_MATCHES = 10
