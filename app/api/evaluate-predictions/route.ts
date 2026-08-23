@@ -34,13 +34,17 @@ async function runEvaluation() {
   let evaluatedCount = 0;
 
   for (const row of pendingPredictions ?? []) {
-    const match = (row as { matches: {
-      status: string;
-      home_goals: number | null;
-      away_goals: number | null;
-      home_goals_ht: number | null;
-      away_goals_ht: number | null;
-    } }).matches;
+    const match = (
+      row as unknown as {
+        matches: {
+          status: string;
+          home_goals: number | null;
+          away_goals: number | null;
+          home_goals_ht: number | null;
+          away_goals_ht: number | null;
+        };
+      }
+    ).matches;
     if (!match || match.status !== "finished") continue;
     if (match.home_goals == null || match.away_goals == null) continue;
 
