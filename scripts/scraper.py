@@ -64,7 +64,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 # ------------------------------------------------------------------
 def api_get(path: str, params: dict | None = None) -> dict:
     url = f"{FOOTBALL_DATA_BASE}{path}"
-    for attempt in range(3):
+    for attempt in range(5):
         resp = requests.get(url, headers=HEADERS, params=params, timeout=20)
         if resp.status_code == 429:
             log.warning("Rate limit atteint, pause de 60s...")
@@ -73,7 +73,7 @@ def api_get(path: str, params: dict | None = None) -> dict:
         resp.raise_for_status()
         time.sleep(6.5)  # ~9 req/min pour rester sous la limite gratuite
         return resp.json()
-    raise RuntimeError(f"Échec API après 3 tentatives : {url}")
+    raise RuntimeError(f"Échec API après 5 tentatives : {url}")
 
 
 # ------------------------------------------------------------------
@@ -144,14 +144,18 @@ def fetch_upcoming_matches() -> list[dict]:
 
     for comp_code in COMPETITIONS:
         log.info(f"Récupération des matchs à venir — {comp_code}")
-        data = api_get(
-            f"/competitions/{comp_code}/matches",
-            params={
-                "dateFrom": date_from.isoformat(),
-                "dateTo": date_to.isoformat(),
-                "status": "SCHEDULED",
-            },
-        )
+        try:
+            data = api_get(
+                f"/competitions/{comp_code}/matches",
+                params={
+                    "dateFrom": date_from.isoformat(),
+                    "dateTo": date_to.isoformat(),
+                    "status": "SCHEDULED",
+                },
+            )
+        except Exception as exc:
+            log.error(f"Échec de récupération pour {comp_code}, on continue : {exc}")
+            continue
         for m in data.get("matches", []):
             m["_competition"] = data.get("competition", {})
             all_matches.append(m)
@@ -169,14 +173,18 @@ def fetch_recent_results() -> list[dict]:
 
     for comp_code in COMPETITIONS:
         log.info(f"Récupération des résultats récents — {comp_code}")
-        data = api_get(
-            f"/competitions/{comp_code}/matches",
-            params={
-                "dateFrom": date_from.isoformat(),
-                "dateTo": date_to.isoformat(),
-                "status": "FINISHED",
-            },
-        )
+        try:
+            data = api_get(
+                f"/competitions/{comp_code}/matches",
+                params={
+                    "dateFrom": date_from.isoformat(),
+                    "dateTo": date_to.isoformat(),
+                    "status": "FINISHED",
+                },
+            )
+        except Exception as exc:
+            log.error(f"Échec de récupération résultats pour {comp_code}, on continue : {exc}")
+            continue
         for m in data.get("matches", []):
             m["_competition"] = data.get("competition", {})
             all_matches.append(m)
