@@ -12,8 +12,15 @@ const TYPES = [
   { value: "BTTS", label: "BTTS" },
   { value: "OVER_2_5", label: "+2.5 buts" },
   { value: "HOME_WIN", label: "Victoire domicile" },
-  { value: "RED_CARD", label: "Cartons" },
+  { value: "AWAY_WIN", label: "Victoire extérieur" },
+  { value: "HT_HOME_WIN", label: "Mi-temps domicile" },
+  { value: "HT_AWAY_WIN", label: "Mi-temps extérieur" },
+  { value: "GOAL_EACH_HALF", label: "But chaque mi-temps" },
+  { value: "DRAW_IN_A_HALF", label: "Nul sur une mi-temps" },
 ];
+
+const selectClass =
+  "rounded-lg border border-pitch-700 bg-pitch-900 px-3 py-2 text-sm text-ink-200 outline-none focus:border-accent-go";
 
 export default function DashboardFilters({
   competitions,
@@ -35,7 +42,7 @@ export default function DashboardFilters({
   return (
     <div className="flex flex-wrap gap-3">
       <select
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+        className={selectClass}
         value={searchParams.competition ?? ""}
         onChange={(e) => updateFilter("competition", e.target.value)}
       >
@@ -49,13 +56,13 @@ export default function DashboardFilters({
 
       <input
         type="date"
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+        className={selectClass}
         value={searchParams.date ?? ""}
         onChange={(e) => updateFilter("date", e.target.value)}
       />
 
       <select
-        className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+        className={selectClass}
         value={searchParams.type ?? ""}
         onChange={(e) => updateFilter("type", e.target.value)}
       >

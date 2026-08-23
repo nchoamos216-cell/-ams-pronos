@@ -3,6 +3,10 @@
     {
       "path": "/api/generate-predictions",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/evaluate-predictions",
+      "schedule": "0 5 * * *"
     }
   ]
 }

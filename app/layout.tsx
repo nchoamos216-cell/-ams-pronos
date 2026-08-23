@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import SiteHeader from "@/components/SiteHeader";
 
 export const metadata: Metadata = {
   title: "AMS Pronos",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fr">
-      <body className="bg-slate-50">{children}</body>
+      <body className="min-h-screen font-body">
+        <SiteHeader />
+        {children}
+      </body>
     </html>
   );
 }

@@ -82,11 +82,12 @@ create table if not exists h2h_history (
   team_a_was_home boolean not null,
   team_a_goals int not null,
   team_b_goals int not null,
+  team_a_goals_ht int,               -- score mi-temps (nécessaire pour les marchés mi-temps)
+  team_b_goals_ht int,
   btts boolean generated always as (team_a_goals > 0 and team_b_goals > 0) stored,
   total_goals int generated always as (team_a_goals + team_b_goals) stored,
   over_2_5 boolean generated always as ((team_a_goals + team_b_goals) > 2) stored,
   home_win boolean,                  -- victoire de l'équipe qui recevait
-  red_card boolean default false,
   created_at timestamptz default now(),
   unique(team_a_id, team_b_id, match_id)
 );
@@ -99,7 +100,8 @@ create index if not exists idx_h2h_pair on h2h_history(team_a_id, team_b_id, mat
 create table if not exists predictions (
   id uuid primary key default gen_random_uuid(),
   match_id uuid not null references matches(id) on delete cascade,
-  market text not null,              -- ex: 'BTTS', 'OVER_2_5', 'HOME_WIN', 'RED_CARD'
+  market text not null,              -- ex: 'BTTS', 'OVER_2_5', 'HOME_WIN', 'AWAY_WIN',
+                                      -- 'HT_HOME_WIN', 'HT_AWAY_WIN', 'GOAL_EACH_HALF', 'DRAW_IN_A_HALF'
   suggested_outcome text not null,   -- ex: 'YES', 'NO', 'HOME', 'AWAY', 'DRAW'
   streak_length int not null,        -- nb de matchs H2H consécutifs où l'option ne s'est PAS produite
   poisson_probability numeric(5,4),  -- probabilité issue du modèle de Poisson (0 à 1)

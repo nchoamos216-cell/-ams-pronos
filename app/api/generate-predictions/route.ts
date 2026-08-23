@@ -2,13 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { generatePredictions, type H2HMatch, type TeamForm } from "@/lib/pronostic-algorithm";
 
-// Cette route utilise la clé service_role (jamais exposée au client) pour écrire
-// dans la table `predictions`. Appelée par un Cron Vercel (voir vercel.json) ou
-// manuellement en POST.
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Empêche Next.js d'essayer de générer cette route statiquement au build :
+// elle doit s'exécuter uniquement à la demande (runtime), pas pendant "npm run build".
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   // Vercel Cron envoie des requêtes GET par défaut
@@ -20,6 +16,14 @@ export async function POST() {
 }
 
 async function runGeneration() {
+  // Le client Supabase est créé ici, à l'intérieur de la fonction, et non au
+  // niveau du module : cela évite que Next.js l'exécute pendant la phase de
+  // build (où les variables d'environnement runtime ne sont pas garanties).
+  const supabaseAdmin = createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
   const { data: matches, error } = await supabaseAdmin
     .from("matches")
     .select("id, home_team_id, away_team_id")
@@ -48,11 +52,12 @@ async function runGeneration() {
       teamAWasHome: r.team_a_was_home,
       teamAGoals: r.team_a_goals,
       teamBGoals: r.team_b_goals,
+      teamAGoalsHt: r.team_a_goals_ht ?? null,
+      teamBGoalsHt: r.team_b_goals_ht ?? null,
       btts: r.btts,
       totalGoals: r.total_goals,
       over25: r.over_2_5,
       homeWin: r.home_win,
-      redCard: r.red_card,
     }));
 
     // 2. Forme récente des deux équipes

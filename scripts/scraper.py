@@ -47,7 +47,10 @@ FOOTBALL_DATA_BASE = "https://api.football-data.org/v4"
 HEADERS = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
 
 # Compétitions gratuites couvertes par football-data.org (codes officiels)
-COMPETITIONS = ["PL", "FL1", "PD", "SA", "BL1", "CL"]  # ajuste selon tes besoins
+# Top 5 championnats + Eredivisie = 6 "grands" championnats couverts par le tier gratuit.
+# (D'autres comme Primeira Liga (PPL) ou Championship (ELC) peuvent être ajoutés
+#  de la même façon si le quota de 10 req/min le permet.)
+COMPETITIONS = ["PL", "FL1", "PD", "SA", "BL1", "DED", "CL"]
 
 H2H_MIN_MATCHES = 5
 H2H_MAX_MATCHES = 10
@@ -156,6 +159,31 @@ def fetch_upcoming_matches() -> list[dict]:
     return all_matches
 
 
+def fetch_recent_results() -> list[dict]:
+    """Récupère les matchs terminés des 3 derniers jours pour mettre à jour
+    leur statut et leur score (nécessaire pour évaluer les pronostics passés)."""
+    date_from = datetime.now(timezone.utc).date() - timedelta(days=3)
+    date_to = datetime.now(timezone.utc).date()
+    all_matches = []
+
+    for comp_code in COMPETITIONS:
+        log.info(f"Récupération des résultats récents — {comp_code}")
+        data = api_get(
+            f"/competitions/{comp_code}/matches",
+            params={
+                "dateFrom": date_from.isoformat(),
+                "dateTo": date_to.isoformat(),
+                "status": "FINISHED",
+            },
+        )
+        for m in data.get("matches", []):
+            m["_competition"] = data.get("competition", {})
+            all_matches.append(m)
+
+    log.info(f"{len(all_matches)} résultats récents trouvés au total")
+    return all_matches
+
+
 # ------------------------------------------------------------------
 # 3. Historique H2H entre deux équipes
 # ------------------------------------------------------------------
@@ -180,6 +208,7 @@ def store_h2h(team_a_uuid: str, team_b_uuid: str, h2h_matches: list[dict],
         if hm.get("status") != "FINISHED":
             continue
         score = hm.get("score", {}).get("fullTime", {})
+        score_ht = hm.get("score", {}).get("halfTime", {})
         if score.get("home") is None or score.get("away") is None:
             continue
 
@@ -187,6 +216,8 @@ def store_h2h(team_a_uuid: str, team_b_uuid: str, h2h_matches: list[dict],
         team_a_was_home = home_team_ext == team_a_external_id
         team_a_goals = score["home"] if team_a_was_home else score["away"]
         team_b_goals = score["away"] if team_a_was_home else score["home"]
+        team_a_goals_ht = score_ht.get("home") if team_a_was_home else score_ht.get("away")
+        team_b_goals_ht = score_ht.get("away") if team_a_was_home else score_ht.get("home")
         home_win = (score["home"] > score["away"])
 
         # Le match doit d'abord exister dans `matches` (au moins comme référence minimale)
@@ -198,6 +229,8 @@ def store_h2h(team_a_uuid: str, team_b_uuid: str, h2h_matches: list[dict],
             "away_team_id": team_b_uuid if team_a_was_home else team_a_uuid,
             "home_goals": score["home"],
             "away_goals": score["away"],
+            "home_goals_ht": score_ht.get("home"),
+            "away_goals_ht": score_ht.get("away"),
         }
         match_res = (
             supabase.table("matches")
@@ -214,8 +247,9 @@ def store_h2h(team_a_uuid: str, team_b_uuid: str, h2h_matches: list[dict],
             "team_a_was_home": team_a_was_home,
             "team_a_goals": team_a_goals,
             "team_b_goals": team_b_goals,
+            "team_a_goals_ht": team_a_goals_ht,
+            "team_b_goals_ht": team_b_goals_ht,
             "home_win": home_win,
-            "red_card": False,  # football-data.org free tier ne fournit pas les cartons détaillés
         }
         supabase.table("h2h_history").upsert(
             h2h_row, on_conflict="team_a_id,team_b_id,match_id"
@@ -302,6 +336,23 @@ def main() -> None:
         except Exception as exc:
             log.error(f"Erreur sur le match {m.get('id')}: {exc}")
             continue
+
+    # --- Mise à jour des résultats récents (nécessaire pour l'historique
+    # de performance : un match "scheduled" doit passer à "finished" avec
+    # son score une fois joué) ---
+    try:
+        recent_results = fetch_recent_results()
+        for m in recent_results:
+            try:
+                comp_uuid = upsert_competition(m["_competition"])
+                home_uuid = upsert_team(m["homeTeam"])
+                away_uuid = upsert_team(m["awayTeam"])
+                upsert_match(m, comp_uuid, home_uuid, away_uuid)
+            except Exception as exc:
+                log.error(f"Erreur mise à jour résultat {m.get('id')}: {exc}")
+                continue
+    except Exception as exc:
+        log.error(f"Erreur récupération des résultats récents : {exc}")
 
     log.info(f"Recalcul de la forme pour {len(processed_teams)} équipes")
     for team_uuid in processed_teams:

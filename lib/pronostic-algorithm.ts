@@ -4,6 +4,13 @@
  * Ce module est pur TypeScript (aucune dépendance externe) afin de pouvoir
  * être exécuté aussi bien côté serveur (route handler / server action Next.js)
  * que dans un test unitaire.
+ *
+ * LIMITE DE DONNÉES IMPORTANTE :
+ * Les marchés liés aux corners, fautes, touches ou buteurs remplaçants ne
+ * sont PAS implémentés ici car la source de données gratuite utilisée
+ * (football-data.org, tier free) ne fournit que le score final et le score
+ * à la mi-temps — aucune statistique détaillée de ce type. Tous les marchés
+ * ci-dessous sont donc calculés uniquement à partir de ces deux scores.
  */
 
 // -------------------------------------------------------------
@@ -14,11 +21,12 @@ export interface H2HMatch {
   teamAWasHome: boolean;
   teamAGoals: number;
   teamBGoals: number;
+  teamAGoalsHt: number | null;
+  teamBGoalsHt: number | null;
   btts: boolean;
   totalGoals: number;
   over25: boolean;
   homeWin: boolean | null;
-  redCard: boolean;
 }
 
 export interface TeamForm {
@@ -28,7 +36,16 @@ export interface TeamForm {
   avgGoalsConcededAway: number | null;
 }
 
-export type MarketKey = "BTTS" | "OVER_2_5" | "HOME_WIN" | "RED_CARD";
+export type MarketKey =
+  | "BTTS"
+  | "OVER_2_5"
+  | "HOME_WIN"
+  | "AWAY_WIN"
+  | "HT_HOME_WIN"
+  | "HT_AWAY_WIN"
+  | "GOAL_EACH_HALF"
+  | "DRAW_IN_A_HALF";
+
 export type SuggestedOutcome = "YES" | "NO" | "HOME" | "AWAY" | "DRAW";
 
 export interface Prediction {
@@ -63,13 +80,45 @@ function computeAbsenceStreak(
   return streak;
 }
 
+// -------------------------------------------------------------
+// Prédicats dérivés du score mi-temps / fin de match
+// -------------------------------------------------------------
+function secondHalfGoals(m: H2HMatch): { a: number; b: number } | null {
+  if (m.teamAGoalsHt == null || m.teamBGoalsHt == null) return null;
+  return {
+    a: m.teamAGoals - m.teamAGoalsHt,
+    b: m.teamBGoals - m.teamBGoalsHt,
+  };
+}
+
 const MARKET_PREDICATES: Record<
-  Exclude<MarketKey, "HOME_WIN">,
+  Exclude<MarketKey, "HOME_WIN" | "AWAY_WIN">,
   (m: H2HMatch) => boolean
 > = {
   BTTS: (m) => m.btts,
   OVER_2_5: (m) => m.over25,
-  RED_CARD: (m) => m.redCard,
+  HT_HOME_WIN: (m) =>
+    m.teamAGoalsHt != null &&
+    m.teamBGoalsHt != null &&
+    (m.teamAWasHome ? m.teamAGoalsHt > m.teamBGoalsHt : m.teamBGoalsHt > m.teamAGoalsHt),
+  HT_AWAY_WIN: (m) =>
+    m.teamAGoalsHt != null &&
+    m.teamBGoalsHt != null &&
+    (m.teamAWasHome ? m.teamBGoalsHt > m.teamAGoalsHt : m.teamAGoalsHt > m.teamBGoalsHt),
+  GOAL_EACH_HALF: (m) => {
+    const sh = secondHalfGoals(m);
+    if (!sh || m.teamAGoalsHt == null || m.teamBGoalsHt == null) return false;
+    const firstHalfGoals = m.teamAGoalsHt + m.teamBGoalsHt;
+    const secondHalfTotal = sh.a + sh.b;
+    return firstHalfGoals > 0 && secondHalfTotal > 0;
+  },
+  DRAW_IN_A_HALF: (m) => {
+    const sh = secondHalfGoals(m);
+    if (!sh || m.teamAGoalsHt == null || m.teamBGoalsHt == null) return false;
+    const htDraw = m.teamAGoalsHt === m.teamBGoalsHt;
+    const shDraw = sh.a === sh.b;
+    return htDraw || shDraw;
+  },
 };
 
 // -------------------------------------------------------------
@@ -102,7 +151,7 @@ function estimateExpectedGoals(homeForm: TeamForm, awayForm: TeamForm) {
 
 /**
  * Calcule, via une grille de Poisson bivariée indépendante (0 à maxGoals),
- * les probabilités des marchés BTTS, Over 2.5 et victoire domicile.
+ * les probabilités des principaux marchés plein-match.
  */
 export function poissonMarketProbabilities(
   homeForm: TeamForm,
@@ -139,13 +188,20 @@ export function poissonMarketProbabilities(
  * Poisson (poids "forme actuelle") en un score de confiance 0-100.
  *
  * Pondération : 60% série H2H (plafonnée à 5 matchs = confiance historique max),
- *               40% probabilité Poisson de l'événement.
+ *               40% probabilité Poisson de l'événement (ou fréquence historique
+ *               simple pour les marchés sans équivalent Poisson direct).
  */
-function computeConfidence(streakLength: number, poissonProb: number): number {
+function computeConfidence(streakLength: number, secondaryProb: number): number {
   const streakScore = Math.min(streakLength / 5, 1) * 100; // plafonné à 5
-  const poissonScore = poissonProb * 100;
-  const confidence = streakScore * 0.6 + poissonScore * 0.4;
+  const secondaryScore = secondaryProb * 100;
+  const confidence = streakScore * 0.6 + secondaryScore * 0.4;
   return Math.round(confidence * 100) / 100;
+}
+
+function historicalRate(h2hMatches: H2HMatch[], predicate: (m: H2HMatch) => boolean): number {
+  const withHt = h2hMatches.filter((m) => m.teamAGoalsHt != null && m.teamBGoalsHt != null);
+  if (withHt.length === 0) return 0;
+  return withHt.filter(predicate).length / withHt.length;
 }
 
 // -------------------------------------------------------------
@@ -215,23 +271,86 @@ export function generatePredictions({
     }
   }
 
-  // --- Carton rouge ---
+  // --- Victoire à l'extérieur ---
   {
-    const streak = computeAbsenceStreak(h2hMatches, MARKET_PREDICATES.RED_CARD);
+    const streak = computeAbsenceStreak(
+      h2hMatches,
+      (m) => !m.teamAWasHome && m.homeWin === false
+      // l'équipe qui reçoit AUJOURD'HUI est "team_a" ; on regarde donc les H2H où
+      // team_a jouait à l'extérieur et n'a pas perdu (proxy de "l'extérieur ne gagne pas")
+    );
     if (streak >= minStreakToSuggest) {
-      // Pas de vrai modèle Poisson pour les cartons ici : on utilise une
-      // fréquence historique simple sur l'échantillon disponible comme proxy.
-      const redCardRate =
-        h2hMatches.length > 0
-          ? h2hMatches.filter((m) => m.redCard).length / h2hMatches.length
-          : 0;
       predictions.push({
-        market: "RED_CARD",
+        market: "AWAY_WIN",
+        suggestedOutcome: "AWAY",
+        streakLength: streak,
+        poissonProbability: poisson.pAwayWin,
+        confidenceScore: computeConfidence(streak, poisson.pAwayWin),
+        reasoning: `L'équipe à l'extérieur n'a pas gagné lors des ${streak} derniers H2H dans cette configuration — probabilité Poisson de victoire extérieure estimée à ${(poisson.pAwayWin * 100).toFixed(1)}%.`,
+      });
+    }
+  }
+
+  // --- Victoire à la mi-temps (domicile) ---
+  {
+    const streak = computeAbsenceStreak(h2hMatches, MARKET_PREDICATES.HT_HOME_WIN);
+    const rate = historicalRate(h2hMatches, MARKET_PREDICATES.HT_HOME_WIN);
+    if (streak >= minStreakToSuggest) {
+      predictions.push({
+        market: "HT_HOME_WIN",
+        suggestedOutcome: "HOME",
+        streakLength: streak,
+        poissonProbability: null,
+        confidenceScore: computeConfidence(streak, rate),
+        reasoning: `L'équipe à domicile n'était pas menée à la mi-temps lors des ${streak} derniers H2H (fréquence historique : ${(rate * 100).toFixed(0)}%).`,
+      });
+    }
+  }
+
+  // --- Victoire à la mi-temps (extérieur) ---
+  {
+    const streak = computeAbsenceStreak(h2hMatches, MARKET_PREDICATES.HT_AWAY_WIN);
+    const rate = historicalRate(h2hMatches, MARKET_PREDICATES.HT_AWAY_WIN);
+    if (streak >= minStreakToSuggest) {
+      predictions.push({
+        market: "HT_AWAY_WIN",
+        suggestedOutcome: "AWAY",
+        streakLength: streak,
+        poissonProbability: null,
+        confidenceScore: computeConfidence(streak, rate),
+        reasoning: `L'équipe à l'extérieur n'a pas mené à la mi-temps lors des ${streak} derniers H2H (fréquence historique : ${(rate * 100).toFixed(0)}%).`,
+      });
+    }
+  }
+
+  // --- But dans chaque mi-temps ---
+  {
+    const streak = computeAbsenceStreak(h2hMatches, MARKET_PREDICATES.GOAL_EACH_HALF);
+    const rate = historicalRate(h2hMatches, MARKET_PREDICATES.GOAL_EACH_HALF);
+    if (streak >= minStreakToSuggest) {
+      predictions.push({
+        market: "GOAL_EACH_HALF",
         suggestedOutcome: "YES",
         streakLength: streak,
         poissonProbability: null,
-        confidenceScore: computeConfidence(streak, redCardRate),
-        reasoning: `Aucun carton rouge lors des ${streak} derniers H2H — série à surveiller (fréquence historique : ${(redCardRate * 100).toFixed(0)}%).`,
+        confidenceScore: computeConfidence(streak, rate),
+        reasoning: `Pas de but dans chaque mi-temps lors des ${streak} derniers H2H (fréquence historique : ${(rate * 100).toFixed(0)}%).`,
+      });
+    }
+  }
+
+  // --- Nul dans au moins une mi-temps ---
+  {
+    const streak = computeAbsenceStreak(h2hMatches, MARKET_PREDICATES.DRAW_IN_A_HALF);
+    const rate = historicalRate(h2hMatches, MARKET_PREDICATES.DRAW_IN_A_HALF);
+    if (streak >= minStreakToSuggest) {
+      predictions.push({
+        market: "DRAW_IN_A_HALF",
+        suggestedOutcome: "YES",
+        streakLength: streak,
+        poissonProbability: null,
+        confidenceScore: computeConfidence(streak, rate),
+        reasoning: `Aucune mi-temps nulle lors des ${streak} derniers H2H (fréquence historique : ${(rate * 100).toFixed(0)}%).`,
       });
     }
   }
