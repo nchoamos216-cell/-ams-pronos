@@ -34,8 +34,13 @@ async function runEvaluation() {
   let evaluatedCount = 0;
 
   for (const row of pendingPredictions ?? []) {
-    // @ts-expect-error — la relation "matches" est un objet unique via !inner
-    const match = row.matches;
+    const match = (row as { matches: {
+      status: string;
+      home_goals: number | null;
+      away_goals: number | null;
+      home_goals_ht: number | null;
+      away_goals_ht: number | null;
+    } }).matches;
     if (!match || match.status !== "finished") continue;
     if (match.home_goals == null || match.away_goals == null) continue;
 
